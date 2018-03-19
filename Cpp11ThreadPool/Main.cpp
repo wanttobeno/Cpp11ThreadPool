@@ -2,16 +2,11 @@
 #include <iostream>
 #include <windows.h>
 
-
-void C_Function(int slp)
+void C_Function(int num)
 {
-	if (slp>0) {
-		printf("C_Function sleep %d ThreadID %d \n",slp, std::this_thread::get_id());
-		std::this_thread::sleep_for(std::chrono::milliseconds(slp));
-		//Sleep(slp );
-	}
-	else
-		printf("  C_Function  ThreadID %d\n", std::this_thread::get_id());
+	std::this_thread::sleep_for(std::chrono::microseconds(10));
+   printf("C_Function  num = %d ThreadID %d\n", num,std::this_thread::get_id());
+   std::this_thread::sleep_for(std::chrono::microseconds(5));
 }
 
 struct StructWithFun 
@@ -24,81 +19,86 @@ struct StructWithFun
 };
 
 class ClassWithStaticFun 
-{    //函数必须是 static 的才能使用线程池
-public:
+{   
+public: 
+	//函数必须是 static 的才能使用线程池
 	static int StaticMemberFun1(int n = 0) 
 	{
-		std::cout << n << "  StaticMemberFun1  ThreadID " << std::this_thread::get_id() << std::endl;
+		printf("StaticMemberFun1 %d  ThreadID %d \n", n, std::this_thread::get_id());
 		return n;
 	}
 
 	static std::string StaticMemberFun2(int n, std::string str, char c) 
 	{
-		std::cout << n << "  StaticMemberFun2  "<< str.c_str() <<"  " << (int)c <<" ThreadID " << std::this_thread::get_id() << std::endl;
+		printf("StaticMemberFun2 %d %s %c ThreadID %d \n", n, str.c_str() ,c, std::this_thread::get_id());
 		return str;
 	}
 };
+
+
+#define  TEST_TASK_COUNT 100
+void AddTaskNoWaiteFinish()
+{
+	printf("\n %s \n", __FUNCTION__);
+	mystd::threadpool threadPool{ 50 };
+	for (int i = 1; i <= TEST_TASK_COUNT; i++)
+	{
+		threadPool.commit(C_Function, i);
+	}
+	printf("commit all ThreadID idlsize = %d\n",threadPool.LdleThreadPoolSize());
+}
+
+void AddTaskWaiteFinish()
+{
+	printf("\n %s \n", __FUNCTION__);
+	mystd::threadpool threadPool(10);
+	std::vector< std::future<int> > results;
+	for (int i = 1; i <= TEST_TASK_COUNT; ++i)
+	{
+		results.emplace_back(threadPool.commit([i] {
+			// 模拟任务时间
+			std::this_thread::sleep_for(std::chrono::milliseconds(30));
+			printf(" num = %d  ThreadID = %d\n", i,std::this_thread::get_id());
+			std::this_thread::sleep_for(std::chrono::milliseconds(30));
+			return i*i;}));
+	}
+
+	for (auto && result : results)
+		result.get();
+}
+
+void GetTaskReturnValueTest()
+{
+	printf("\n %s \n", __FUNCTION__);
+	mystd::threadpool threadPool{ 50 };
+	std::future<void> cFunFuture = threadPool.commit(C_Function, 100);
+	std::future<int> structFuture = threadPool.commit(StructWithFun{}, 1111);
+	ClassWithStaticFun aStaticClass;
+	std::future<int> StaticFun1Future = threadPool.commit(aStaticClass.StaticMemberFun1, 9999); //IDE提示错误,但可以编译运行
+	std::future<std::string> StaticFun2Future = threadPool.commit(ClassWithStaticFun::StaticMemberFun2, 9998, "mult args", 123);
+	std::future<std::string> LambdaFuture = threadPool.commit([]()->std::string {
+		printf("Lambda ThreadID %d \n", std::this_thread::get_id());
+		return "Lambda return \n"; });
+
+	//调用.get()获取返回值会等待线程执行完,获取返回值
+	cFunFuture.get();
+	structFuture.get();
+	StaticFun1Future.get();
+	StaticFun2Future.get();
+	printf("%s \n", LambdaFuture.get().c_str());
+}
 
 int main()
 {
 	try 
 	{
-		mystd::threadpool executor{ 50 };
-		ClassWithStaticFun a;
-		std::future<void> ff = executor.commit(C_Function, 0);
-		std::future<int> fg = executor.commit(StructWithFun{}, 1111);
-		std::future<int> gg = executor.commit(a.StaticMemberFun1, 9999); //IDE提示错误,但可以编译运行
-		std::future<std::string> gh = executor.commit(ClassWithStaticFun::StaticMemberFun2, 9998, "mult args", 123);
-		std::future<std::string> fh = executor.commit([]()->std::string { std::cout << "Lambda ThreadID " << std::this_thread::get_id() << std::endl; return "Lambda return \n"; });
-
-
-		std::this_thread::sleep_for(std::chrono::microseconds(900));
-
-		for (int i = 0; i < 50; i++) 
-		{
-			executor.commit(C_Function, i * 100);
-		}
-		std::cout << " commit all ThreadID " << std::this_thread::get_id() << " idlsize=" << executor.LdleThreadPoolSize() << std::endl;
-
-		std::cout << " sleep ThreadID " << std::this_thread::get_id() << std::endl;
-		std::this_thread::sleep_for(std::chrono::seconds(3));
-
-		//调用.get()获取返回值会等待线程执行完,获取返回值
-		ff.get(); 
-		std::cout << fg.get() << "  " << fh.get().c_str() << "  " << std::this_thread::get_id() << std::endl;
-
-		std::cout << " sleep  ThreadID " << std::this_thread::get_id() << std::endl;
-		std::this_thread::sleep_for(std::chrono::seconds(3));
-
-		std::cout << " C_Function(55) ThreadID " << std::this_thread::get_id() << std::endl;
-		//调用.get()获取返回值会等待线程执行完
-		executor.commit(C_Function, 55).get();    
-
-		std::cout << "end... " << std::this_thread::get_id() << std::endl;
-
-		mystd::threadpool pool(4);
-		std::vector< std::future<int> > results;
-
-		for (int i = 0; i < 8; ++i) 
-		{
-			results.emplace_back(
-				pool.commit([i] {
-				std::cout << "hello " << i << std::endl;
-				std::this_thread::sleep_for(std::chrono::seconds(1));
-				std::cout << "world " << i << std::endl;
-				return i*i;
-			})
-				);
-		}
-		std::cout << " commit all2 ThreadID  " << std::this_thread::get_id() << std::endl;
-
-		for (auto && result : results)
-			std::cout << result.get() << ' ';
-		std::cout << std::endl;
+		AddTaskNoWaiteFinish();
+		AddTaskWaiteFinish();
+		GetTaskReturnValueTest();
 	}
 	catch (std::exception& e) 
 	{
-		std::cout << "some unhappy happened... ThreadID  " << std::this_thread::get_id() << e.what() << std::endl;
+		printf("some unhappy happened... ThreadID  %d %s\n", std::this_thread::get_id(), e.what());
 	}
 	getchar();
 	return 0;
