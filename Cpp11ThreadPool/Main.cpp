@@ -1,6 +1,5 @@
 #include "threadpool.h"
 #include <iostream>
-#include <windows.h>
 
 void C_Function(int num)
 {
